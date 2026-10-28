@@ -246,16 +246,21 @@ mod tests {
 
     #[test]
     fn prints_markdown_with_colored_code() {
+        let (path, base) = if cfg!(windows) {
+            ("C:\\My Notes\\a.md", "file:///C:/My%20Notes/")
+        } else {
+            ("/My Notes/a.md", "file:///My%20Notes/")
+        };
         let html = page(
             "# Hi\n\n```rust\nfn x() {}\n```\n\n- \n",
             true,
             "a <b>",
-            Some(Path::new("C:\\My Notes\\a.md")),
+            Some(Path::new(path)),
         );
         assert!(html.contains("<h1>Hi</h1>"));
         assert!(html.contains("<span style=\"color:#cf222e\">fn</span>"));
         assert!(html.contains("<title>a &lt;b&gt;</title>"));
-        assert!(html.contains("<base href=\"file:///C:/My%20Notes/\">"));
+        assert!(html.contains(&format!("<base href=\"{base}\">")));
     }
 
     #[test]

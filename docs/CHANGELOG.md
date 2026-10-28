@@ -2,7 +2,7 @@
 
 Versions are `major.minor.hotfix`. Each version is a `vX.Y.Z` tag on the Releases page, with a Windows installer, a portable Windows `.exe` and a Linux AppImage.
 
-## 1.0.0 (unreleased)
+## 1.0.0 (2026-10-28)
 
 Dystonotepad is now **DystoPad**, rebuilt from scratch in Rust as a native app. It starts with the tabs you had open in Dystonotepad, unsaved text included.
 

@@ -4,7 +4,7 @@ Last updated: 2026-10-28
 
 ## Where things stand
 
-- **App:** DystoPad 1.0.0, the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief (`TODO.md`): the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license. Not released yet: the owner tags it.
+- **App:** DystoPad 1.0.0, the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief (`TODO.md`): the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license. Released as `v1.0.0` on 2026-10-28.
 - **Stack:** Rust 2024, eframe/egui 0.37 (wgpu), pulldown-cmark, syntect, rfd for the file dialogs, interprocess for the single instance.
 - Verified on 2026-10-28 (Windows 11 at 125 % scaling, Rust 1.99.1), driving the debug and release builds with simulated clicks and keys and checking screenshots:
   - `cargo test` (41 tests) passes; `cargo build --release` gives a 16 MB `dystopad.exe` with its icon and "DystoPad" as the file description; `makensis` builds the 6 MB setup.
@@ -34,6 +34,6 @@ Last updated: 2026-10-28
 
 ## Next steps (suggested, not yet agreed with the owner)
 
-1. Install the setup and check "Open with" for `.txt` and `.md`, then uninstall Dystonotepad.
-2. Tag `v1.0.0` when the owner is happy, which builds the three downloads.
+1. Install the setup from the release, check "Open with" for `.txt` and `.md`, then uninstall Dystonotepad.
+2. Start the AppImage on a Linux desktop.
 3. Use it for a while and collect the next TODO list.
