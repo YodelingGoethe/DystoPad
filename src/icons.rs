@@ -5,7 +5,7 @@ use egui::{Color32, Image, Rect, Ui};
 
 pub struct Icon {
     uri: &'static str,
-    svg: &'static str,
+    pub svg: &'static str,
 }
 
 macro_rules! line_icon {

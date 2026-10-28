@@ -14,7 +14,7 @@ See `docs/STATUS.md` for what is done and verified and for the next steps. Keep 
 - `cargo fmt` before committing (rustfmt defaults).
 - `DYSTOPAD_DATA_DIR=<folder>` makes the app keep its session and settings there instead of `%APPDATA%\DystoPad` (`~/.local/share/DystoPad`), and skips the Dystonotepad import. Use it for test runs, so the owner's real tabs stay untouched.
 - Installer: `makensis /DVERSION=x.y.z packaging\windows\installer.nsi` (NSIS also sits in `%LOCALAPPDATA%\tauri\NSIS` on the owner's machine). AppImage: `packaging/linux/appimage.sh x.y.z`.
-- Screenshots of the running app: PowerShell with `PrintWindow` (flag 2) after `SetProcessDPIAware`, since egui draws with the GPU.
+- Screenshots of the running app: PowerShell with `PrintWindow` (flag 2) after `SetProcessDPIAware`, since egui draws with the GPU. To check the print page without the owner's browser, render it with headless Edge (`--headless=new --screenshot`, with its own `--user-data-dir`).
 
 ## Versioning and releases
 
@@ -25,7 +25,7 @@ Versions are `major.minor.hotfix`, tagged `vX.Y.Z`: minor for features, hotfix f
 - `src/app.rs`: the window. It owns the tabs, menus, format bar, status bar, dialogs, shortcuts, open/save, print and the session.
   - **Tabs:** `Tab.saved` is the text as it is on disk (`None` = unknown, always unsaved); `dirty()` compares it with `text`. An unsaved tab's title is `first_words` of its text.
   - **Modes:** `md` (the Markdown switch) and `view` (`Editor | Split | Preview`, ignored while `md` is off). New tabs start plain; turning Markdown on goes to Split; opening a `.md` sets `md` and Preview.
-  - **Actions:** menus, buttons and shortcuts push an `Action`; they run at the start of the next frame, before the editor is drawn, so focus changes and injected key events (Undo/Redo from the menu) reach the text field in that frame. Cut/Copy/Paste from the menu go through `ViewportCommand::Request*`.
+  - **Actions:** menus, buttons and shortcuts push an `Action`; they run at the start of the next frame, before the editor is drawn, so focus changes and injected key events (Undo/Redo from the menu) reach the text field in that frame. Cut/Copy/Paste from the menu go through `ViewportCommand::Request*`, after putting back the selection from `Tab.cursor`: opening the menu takes the focus from the text field, and egui drops an unfocused field's selection. `Tab.cursor` only updates while the field has focus.
   - **Session:** `touch()` schedules a write 800 ms after the last change; closing the window writes it at once. Closing the window never asks; closing a tab with unsaved changes asks Save / Don't save / Cancel; closing the last tab closes the window.
   - **Split view:** the preview is drawn before the editor, so the editor's scroll-to-cursor can't scroll the preview, and the divider is registered last so it wins the drag.
 - `src/editor.rs`: the text field's colors (`Highlighter`, cached per text/size/matches) and the keys that format: Tab/Shift+Tab, Enter in lists, Ctrl+B/I/K, taken out of the input before `TextEdit` sees them. Strikethrough lines are painted by hand (`paint_strikes`): egui draws them too low at this line height.
@@ -34,7 +34,7 @@ Versions are `major.minor.hotfix`, tagged `vX.Y.Z`: minor for features, hotfix f
 - `src/preview.rs`: lays the tree out like github-markdown-css (dark), everything scaled by the zoom. Text is a selectable `Label`; inline-code boxes, link underlines and link clicks work from the galley's glyph positions (one glyph per char, tested).
 - `src/highlight.rs`: syntect grammars mapped to GitHub's colors (`RULES`, dark for the preview, light for printing). The editor maps the same colors to the neon category colors.
 - `src/files.rs`: decoding (UTF-8, BOM, UTF-16, Windows-1252 fallback), line endings, paths. Saving always writes UTF-8 with the file's original line endings and BOM.
-- `src/print.rs`: the document as an HTML page in the temp folder, opened in the browser, which prints it. The page's CSP allows only its own script (a nonce), since documents may contain HTML.
+- `src/print.rs`: the document as an HTML page in the temp folder, opened in the browser, which prints it. `github_markup` rewrites pulldown-cmark's task lists, alerts and footnotes into GitHub's markup, which the bundled github-markdown-css expects. The page's CSP allows only its own script (a nonce), since documents may contain HTML.
 - `src/session.rs`: `session.json` (same format as Dystonotepad's, which is imported once) and `settings.json`, written through a temp file.
 - `src/single_instance.rs`: a local socket per user; a second start sends its file paths to the running window and exits.
 - `src/i18n.rs`: English and German fill the same `Dict` struct, so a missing translation doesn't compile.

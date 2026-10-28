@@ -555,6 +555,9 @@ impl App {
                 self.focus_editor = true;
             }
             Action::Cut | Action::Copy | Action::Paste => {
+                // Opening the menu took the focus from the text field, and egui drops the selection with it.
+                let tab = self.tab();
+                editor::set_selection(ctx, tab.editor_id(), tab.cursor.clone());
                 ctx.send_viewport_cmd(match action {
                     Action::Cut => ViewportCommand::RequestCut,
                     Action::Copy => ViewportCommand::RequestCopy,

@@ -5,14 +5,15 @@ use std::fmt::Write as _;
 use std::hash::{BuildHasher, RandomState};
 use std::path::Path;
 
-use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
+use pulldown_cmark::{BlockQuoteKind, CodeBlockKind, Event, Parser, Tag, TagEnd};
 
-use crate::{format, highlight, markdown};
+use crate::{format, highlight, icons, markdown};
 
 const CSS: &str = include_str!("../assets/print/github-markdown-light.css");
 const PAGE_CSS: &str = "
 body { margin: 0; background: #fff; }
 .markdown-body { box-sizing: border-box; max-width: 980px; margin: 0 auto; padding: 32px 45px; }
+.markdown-alert-title .octicon { margin-right: 8px; }
 .plain { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 10.5pt Consolas, 'DejaVu Sans Mono', monospace; color: #000; }
 @media print { .markdown-body { padding: 0; } }";
 
@@ -83,8 +84,132 @@ fn markdown_html(text: &str) -> String {
         }
     }
     let mut html = String::new();
-    pulldown_cmark::html::push_html(&mut html, events.into_iter());
+    pulldown_cmark::html::push_html(&mut html, github_markup(events).into_iter());
     html
+}
+
+/// Task lists, alerts and footnotes in GitHub's markup instead of pulldown-cmark's, so github-markdown-css styles them.
+fn github_markup(mut events: Vec<Event<'_>>) -> Vec<Event<'_>> {
+    let (mut lists, mut items, mut refs) = (Vec::new(), Vec::new(), Vec::<String>::new());
+    for i in 0..events.len() {
+        let html = match &events[i] {
+            Event::Start(Tag::List(_)) => {
+                lists.push(i);
+                continue;
+            }
+            Event::End(TagEnd::List(_)) => {
+                lists.pop();
+                continue;
+            }
+            Event::Start(Tag::Item) => {
+                items.push(i);
+                continue;
+            }
+            Event::End(TagEnd::Item) => {
+                items.pop();
+                continue;
+            }
+            Event::TaskListMarker(checked) => {
+                let checked = if *checked { " checked" } else { "" };
+                if let (Some(&list), Some(&item)) = (lists.last(), items.last()) {
+                    events[item] = Event::Html("<li class=\"task-list-item\">".into());
+                    if let Event::Start(Tag::List(start)) = events[list] {
+                        events[list] = Event::Html(
+                            match start {
+                                None => "<ul class=\"contains-task-list\">".into(),
+                                Some(n) => {
+                                    format!("<ol class=\"contains-task-list\" start=\"{n}\">")
+                                }
+                            }
+                            .into(),
+                        );
+                    }
+                }
+                format!(
+                    "<input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled{checked}> "
+                )
+            }
+            Event::Start(Tag::BlockQuote(Some(kind))) => {
+                let (class, title, icon) = match kind {
+                    BlockQuoteKind::Note => ("note", "Note", icons::NOTE),
+                    BlockQuoteKind::Tip => ("tip", "Tip", icons::TIP),
+                    BlockQuoteKind::Important => ("important", "Important", icons::IMPORTANT),
+                    BlockQuoteKind::Warning => ("warning", "Warning", icons::WARNING),
+                    BlockQuoteKind::Caution => ("caution", "Caution", icons::CAUTION),
+                };
+                let svg = icon.svg.replacen("<svg ", "<svg class=\"octicon\" ", 1);
+                format!(
+                    "<div class=\"markdown-alert markdown-alert-{class}\"><p class=\"markdown-alert-title\">{svg}{title}</p>\n"
+                )
+            }
+            Event::End(TagEnd::BlockQuote(Some(_))) => "</div>\n".into(),
+            Event::FootnoteReference(label) => {
+                let key = label.to_lowercase();
+                let n = match refs.iter().position(|r| *r == key) {
+                    Some(n) => n + 1,
+                    None => {
+                        refs.push(key.clone());
+                        refs.len()
+                    }
+                };
+                let id = escape(&key);
+                format!(
+                    "<sup><a href=\"#user-content-fn-{id}\" id=\"user-content-fnref-{id}\" data-footnote-ref>{n}</a></sup>"
+                )
+            }
+            _ => continue,
+        };
+        events[i] = Event::Html(html.into());
+    }
+
+    // The notes go last, numbered by their first reference, as on GitHub.
+    let (mut out, mut notes, mut note) = (Vec::new(), Vec::new(), None);
+    for event in events {
+        match event {
+            Event::Start(Tag::FootnoteDefinition(label)) => {
+                note = Some((label.to_lowercase(), Vec::new()))
+            }
+            Event::End(TagEnd::FootnoteDefinition) => notes.extend(note.take()),
+            event => match &mut note {
+                Some((_, body)) => body.push(event),
+                None => out.push(event),
+            },
+        }
+    }
+    if refs.is_empty() {
+        return out;
+    }
+    out.push(Event::Html(
+        "<section class=\"footnotes\" data-footnotes>\n<ol>\n".into(),
+    ));
+    for key in refs {
+        let Some((_, mut body)) = notes
+            .iter()
+            .position(|(k, _)| *k == key)
+            .map(|i| notes.swap_remove(i))
+        else {
+            continue;
+        };
+        let id = escape(&key);
+        let back = Event::Html(
+            format!(" <a href=\"#user-content-fnref-{id}\" class=\"data-footnote-backref\">↩</a>")
+                .into(),
+        );
+        match body
+            .iter()
+            .rposition(|e| matches!(e, Event::End(TagEnd::Paragraph)))
+        {
+            Some(end) => body.insert(end, back),
+            None => body.push(back),
+        }
+        out.push(Event::Html(
+            format!("<li id=\"user-content-fn-{id}\">").into(),
+        ));
+        out.extend(body);
+        out.push(Event::Html("</li>\n".into()));
+    }
+    out.push(Event::Html("</ol>\n</section>\n".into()));
+    out
 }
 
 /// The page to print. Documents may contain HTML, so the page allows no scripts but its own.
@@ -131,6 +256,31 @@ mod tests {
         assert!(html.contains("<span style=\"color:#cf222e\">fn</span>"));
         assert!(html.contains("<title>a &lt;b&gt;</title>"));
         assert!(html.contains("<base href=\"file:///C:/My%20Notes/\">"));
+    }
+
+    #[test]
+    fn prints_task_lists_alerts_and_footnotes_like_github() {
+        let html = page(
+            "- [x] done\n- [ ] open\n\n> [!TIP]\n> Hint\n\nSee[^n] and[^n].\n\n[^n]: The note.\n\n[^unused]: Gone.\n",
+            true,
+            "t",
+            None,
+        );
+        assert!(html.contains("<ul class=\"contains-task-list\">"));
+        assert!(html.contains(
+            "<li class=\"task-list-item\"><input type=\"checkbox\" class=\"task-list-item-checkbox\" disabled checked> done</li>"
+        ));
+        assert!(html.contains("<div class=\"markdown-alert markdown-alert-tip\"><p class=\"markdown-alert-title\"><svg class=\"octicon\""));
+        assert!(html.contains("</svg>Tip</p>"));
+        assert!(html.contains("See<sup><a href=\"#user-content-fn-n\" id=\"user-content-fnref-n\" data-footnote-ref>1</a></sup> and<sup>"));
+        assert!(html.contains(
+            "<li id=\"user-content-fn-n\">\n<p>The note. <a href=\"#user-content-fnref-n\" class=\"data-footnote-backref\">↩</a></p>"
+        ));
+        assert!(!html.contains("Gone."));
+        // The notes come after the text.
+        assert!(
+            html.find("<section class=\"footnotes\"").unwrap() > html.find("See<sup>").unwrap()
+        );
     }
 
     #[test]
