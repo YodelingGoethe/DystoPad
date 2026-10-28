@@ -1,0 +1,31 @@
+[package]
+name = "dystopad"
+version = "1.0.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "A small neon notepad with a Markdown mode"
+repository = "https://github.com/YodelingGoethe/DystoPad"
+
+[dependencies]
+eframe = "0.37"
+egui = "0.37"
+egui_extras = { version = "0.37", features = ["file", "http", "image", "svg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif"] }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+syntect = { version = "5.3", default-features = false, features = ["default-fancy"] }
+rfd = "0.17"
+interprocess = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "7"
+open = "5"
+encoding_rs = "0.8"
+
+[build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

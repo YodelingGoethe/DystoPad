@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="18" result="wide"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="near"/>
+      <feMerge><feMergeNode in="wide"/><feMergeNode in="near"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="40" y="40" width="944" height="944" rx="200" fill="#04040c"/>
+  <rect x="96" y="96" width="832" height="832" rx="150" fill="none" stroke="#4cc9ff" stroke-width="14" filter="url(#glow)"/>
+  <!-- ".Md": a dot, a capital M and a lowercase d, each a bent glass tube. -->
+  <path d="M250 745 L250 745 M330 756 V300 L445 520 L560 300 V756 M780 300 V756 M780 646 C780 584 744 536 700 536 C656 536 620 584 620 646 C620 708 656 756 700 756 C744 756 780 708 780 646" fill="none" stroke="#ff3fb4" stroke-width="44" stroke-linejoin="round" stroke-linecap="round" filter="url(#glow)"/>
+  <path d="M250 745 L250 745 M330 756 V300 L445 520 L560 300 V756 M780 300 V756 M780 646 C780 584 744 536 700 536 C656 536 620 584 620 646 C620 708 656 756 700 756 C744 756 780 708 780 646" fill="none" stroke="#ffd6ef" stroke-width="14" stroke-linejoin="round" stroke-linecap="round"/>
+</svg>

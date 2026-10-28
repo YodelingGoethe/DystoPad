@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=DystoPad
+Comment=A small neon notepad with a Markdown mode
+Exec=dystopad %F
+Icon=dystopad
+Terminal=false
+Categories=Utility;TextEditor;
+MimeType=text/plain;text/markdown;
