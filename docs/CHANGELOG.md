@@ -2,6 +2,11 @@
 
 Versions are `major.minor.hotfix`. Each version is a `vX.Y.Z` tag on the Releases page, with a Windows installer, a portable Windows `.exe` and a Linux AppImage.
 
+## 1.1.0 (2026-10-31)
+
+- **The tabs sit in the title bar,** as in Windows Notepad, next to DystoPad's own minimize, maximize and close buttons. Drag the empty space beside the tabs to move the window, double-click it to maximize, and drag the window's edges to resize it.
+- **Fixed:** a new or opened tab that doesn't fit in the tab strip is now scrolled into view.
+
 ## 1.0.0 (2026-10-28)
 
 Dystonotepad is now **DystoPad**, rebuilt from scratch in Rust as a native app. It starts with the tabs you had open in Dystonotepad, unsaved text included.

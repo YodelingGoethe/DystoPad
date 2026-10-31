@@ -32,6 +32,8 @@ fn main() -> eframe::Result {
         .with_app_id("dystopad")
         .with_inner_size([1440.0, 900.0])
         .with_min_inner_size([900.0, 540.0])
+        // The tab strip is the title bar (`App::tab_strip`).
+        .with_decorations(false)
         .with_drag_and_drop(true);
     if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/icon.png")) {
         viewport = viewport.with_icon(icon);

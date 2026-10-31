@@ -10,8 +10,9 @@ use egui::epaint::CornerRadius;
 use egui::text::{CCursor, LayoutJob, TextWrapping};
 use egui::{
     Align, Align2, Area, Button, CentralPanel, Color32, ComboBox, Context, CursorIcon, Event,
-    FontId, Frame, Id, Key, Layout, Margin, Modal, Modifiers, Order, Panel, Popup, Rect, RichText,
-    ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder, ViewportCommand, pos2, vec2,
+    FontId, Frame, Id, Key, Layout, Margin, Modal, Modifiers, Order, Panel, PointerButton, Popup,
+    Rect, ResizeDirection, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder,
+    ViewportCommand, pos2, vec2,
 };
 
 use crate::format::{self, ListKind};
@@ -23,6 +24,10 @@ use crate::theme::{self, ButtonKind, LINE, MUTED, TEXT, fade, family, tint};
 use crate::{editor, files, icons, print, single_instance};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The width of the window buttons, as in Windows.
+const WINDOW_BUTTON: f32 = 46.0;
+/// How far in from the window's edge it can be resized (`resize_edges`).
+const RESIZE_EDGE: f32 = 4.0;
 const CHANGELOG: &str = include_str!("../docs/CHANGELOG.md");
 
 pub struct Tab {
@@ -153,6 +158,7 @@ enum Action {
     ZoomReset,
     Wrap,
     Fullscreen,
+    Maximize,
     Settings,
     Format(Fmt),
     SetView(View),
@@ -198,6 +204,8 @@ pub struct App {
     fullscreen: bool,
     zoom_wheel: f32,
     frames: u32,
+    /// The tab the strip last scrolled into view.
+    shown_tab: u64,
 }
 
 impl App {
@@ -230,6 +238,7 @@ impl App {
             fullscreen: false,
             zoom_wheel: 1.0,
             frames: 0,
+            shown_tab: 0,
         };
         let saved = session::load_session();
         for tab in saved.tabs {
@@ -617,6 +626,15 @@ impl App {
                 self.fullscreen = !self.fullscreen;
                 ctx.send_viewport_cmd(ViewportCommand::Fullscreen(self.fullscreen));
             }
+            // Maximize or restore; in fullscreen the same button leaves fullscreen.
+            Action::Maximize => {
+                if self.fullscreen {
+                    self.run(ctx, Action::Fullscreen);
+                } else {
+                    let maximized = ctx.input(|i| i.viewport().maximized == Some(true));
+                    ctx.send_viewport_cmd(ViewportCommand::Maximized(!maximized));
+                }
+            }
             Action::Settings => self.dialog = Some(Dialog::Settings),
             Action::Format(f) => self.format(ctx, f),
             Action::SetView(view) => {
@@ -933,11 +951,26 @@ impl App {
 
     // ── Layout ────────────────────────────────────────────────────────
 
+    /// The tabs share the window's top edge with the window buttons, as in Notepad: the window has no
+    /// frame of its own, so the strip's empty space moves the window and a double-click maximizes it.
     fn tab_strip(&mut self, ui: &mut Ui) {
         let t = self.t();
+        let window = ui.ctx().content_rect();
+        let caption = ui.interact(
+            ui.max_rect().with_min_y(window.top()),
+            ui.scope_id().with("caption"),
+            Sense::click_and_drag(),
+        );
+        if caption.drag_started_by(PointerButton::Primary) {
+            ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
+        }
+        if caption.double_clicked() {
+            self.actions.push(Action::Maximize);
+        }
         let height = 36.0;
         let n = self.tabs.len() as f32;
-        let room = ui.available_width() - 44.0;
+        // Leave room for the + button, some empty strip to drag the window by, and the window buttons.
+        let room = ui.available_width() - 44.0 - 40.0 - 3.0 * WINDOW_BUTTON;
         let width = ((room - 4.0 * (n - 1.0)) / n).clamp(120.0, 220.0);
         let mut active_rect = None;
         ui.horizontal(|ui| {
@@ -969,7 +1002,8 @@ impl App {
                                 se: 0,
                             };
                             if active {
-                                active_rect = Some(rect);
+                                // Only the part the strip shows, so the bottom line stays closed under a hidden tab.
+                                active_rect = Some(rect.intersect(ui.clip_rect()));
                                 painter.add(theme::glow(LINE, 10, 0.35).as_shape(rect, top));
                                 painter.rect_filled(rect, top, theme::BG);
                                 painter.rect_filled(rect, top, fade(LINE, 0.07));
@@ -1039,7 +1073,7 @@ impl App {
                             } else if response.clicked() {
                                 self.actions.push(Action::Activate(i));
                             }
-                            if active && self.frames < 3 {
+                            if active && (self.frames < 3 || tab.id != self.shown_tab) {
                                 response.scroll_to_me(None);
                             }
                         }
@@ -1060,17 +1094,72 @@ impl App {
                 self.actions.push(Action::NewTab);
             }
         });
+        self.shown_tab = self.tab().id;
+        self.window_buttons(ui, window);
         // The strip's bottom line, open under the active tab.
         let full = ui.max_rect();
         let y = full.bottom() - 0.5;
         let painter = ui.painter();
-        match active_rect.map(|r| r.intersect(ui.clip_rect())) {
+        match active_rect {
             Some(r) if r.width() > 0.0 => {
                 painter.hline(full.left()..=r.left(), y, Stroke::new(1.0, theme::hair()));
                 painter.hline(r.right()..=full.right(), y, Stroke::new(1.0, theme::hair()));
             }
             _ => {
                 painter.hline(full.x_range(), y, Stroke::new(1.0, theme::hair()));
+            }
+        }
+    }
+
+    /// Minimize, maximize and close in the window's top right corner, down to the strip's bottom line.
+    fn window_buttons(&mut self, ui: &mut Ui, window: Rect) {
+        let t = self.t();
+        let ctx = ui.ctx().clone();
+        let maximized = self.fullscreen || ctx.input(|i| i.viewport().maximized == Some(true));
+        let buttons = [
+            (&icons::MINUS, t.minimize),
+            if maximized {
+                (&icons::COPY, t.restore)
+            } else {
+                (&icons::SQUARE, t.maximize)
+            },
+            (&icons::X, t.close),
+        ];
+        for (i, (icon, tooltip)) in buttons.into_iter().enumerate() {
+            let left = window.right() - WINDOW_BUTTON * (3 - i) as f32;
+            let rect = Rect::from_min_max(
+                pos2(left, window.top()),
+                pos2(left + WINDOW_BUTTON, ui.max_rect().bottom() - 1.0),
+            );
+            let response = ui
+                .interact(rect, ui.scope_id().with(("window", i)), Sense::click())
+                .on_hover_text(tooltip);
+            let close = i == 2;
+            if response.hovered() {
+                let fill = if close {
+                    theme::DANGER
+                } else {
+                    fade(LINE, 0.14)
+                };
+                ui.painter().rect_filled(rect, 0.0, fill);
+            }
+            let color = if response.hovered() {
+                TEXT
+            } else {
+                tint(LINE, 0.55)
+            };
+            icons::paint(
+                ui,
+                Rect::from_center_size(rect.center(), vec2(14.0, 14.0)),
+                icon,
+                color,
+            );
+            if response.clicked() {
+                match i {
+                    0 => ctx.send_viewport_cmd(ViewportCommand::Minimized(true)),
+                    1 => self.actions.push(Action::Maximize),
+                    _ => ctx.send_viewport_cmd(ViewportCommand::Close),
+                }
             }
         }
     }
@@ -1265,7 +1354,10 @@ impl App {
     }
 
     fn workspace(&mut self, ui: &mut Ui) {
-        let rect = ui.max_rect();
+        // Keeps the scroll bars clear of the window's resize edge.
+        let rect = ui
+            .max_rect()
+            .with_max_x(ui.max_rect().right() - RESIZE_EDGE);
         match self.tab().shown_view() {
             View::Editor => self.editor_pane(ui, rect),
             View::Preview => self.preview_pane(ui, rect),
@@ -1705,6 +1797,9 @@ impl eframe::App for App {
             .exact_size(32.0)
             .show(ui, |ui| self.status_bar(ui));
         CentralPanel::no_frame().show(ui, |ui| self.workspace(ui));
+        if !self.fullscreen && ctx.input(|i| i.viewport().maximized != Some(true)) {
+            resize_edges(ui);
+        }
         self.dialogs(&ctx);
         self.toasts(&ctx);
 
@@ -1728,6 +1823,54 @@ impl eframe::App for App {
 
     fn on_exit(&mut self) {
         self.save_session();
+    }
+}
+
+/// The window has no frame, so its outermost pixels resize it. Registered after everything else, so they win.
+fn resize_edges(ui: &mut Ui) {
+    const CORNER: f32 = 12.0;
+    let w = ui.ctx().content_rect();
+    let (l, r, t, b) = (w.left(), w.right(), w.top(), w.bottom());
+    let at = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+    use CursorIcon as C;
+    use ResizeDirection as D;
+    // Corners last, so they win over the sides.
+    let edges = [
+        (at(l, t, r, t + RESIZE_EDGE), D::North, C::ResizeNorth),
+        (at(l, b - RESIZE_EDGE, r, b), D::South, C::ResizeSouth),
+        (at(l, t, l + RESIZE_EDGE, b), D::West, C::ResizeWest),
+        (at(r - RESIZE_EDGE, t, r, b), D::East, C::ResizeEast),
+        (
+            at(l, t, l + CORNER, t + CORNER),
+            D::NorthWest,
+            C::ResizeNorthWest,
+        ),
+        (
+            at(r - CORNER, t, r, t + CORNER),
+            D::NorthEast,
+            C::ResizeNorthEast,
+        ),
+        (
+            at(l, b - CORNER, l + CORNER, b),
+            D::SouthWest,
+            C::ResizeSouthWest,
+        ),
+        (
+            at(r - CORNER, b - CORNER, r, b),
+            D::SouthEast,
+            C::ResizeSouthEast,
+        ),
+    ];
+    for (i, (rect, direction, cursor)) in edges.into_iter().enumerate() {
+        let response = ui.interact(rect, Id::unique(("resize", i)), Sense::drag());
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(cursor);
+            // On the press, not once a drag is recognized, so the edge doesn't lag behind the mouse.
+            if ui.input(|i| i.pointer.primary_pressed()) {
+                ui.ctx()
+                    .send_viewport_cmd(ViewportCommand::BeginResize(direction));
+            }
+        }
     }
 }
 

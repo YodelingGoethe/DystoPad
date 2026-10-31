@@ -33,6 +33,15 @@ macro_rules! octicon {
 
 line_icon!(PLUS, r#"<path d="M5 12h14M12 5v14"/>"#);
 line_icon!(X, r#"<path d="M18 6 6 18M6 6l12 12"/>"#);
+line_icon!(MINUS, r#"<path d="M5 12h14"/>"#);
+line_icon!(
+    SQUARE,
+    r#"<rect width="18" height="18" x="3" y="3" rx="2"/>"#
+);
+line_icon!(
+    COPY,
+    r#"<rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>"#
+);
 line_icon!(CHEVRON, r#"<path d="m6 9 6 6 6-6"/>"#);
 line_icon!(CHEVRON_RIGHT, r#"<path d="m9 18 6-6-6-6"/>"#);
 line_icon!(ARROW_UP, r#"<path d="m5 12 7-7 7 7M12 19V5"/>"#);

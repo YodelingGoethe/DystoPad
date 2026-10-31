@@ -1,12 +1,10 @@
-# REWRITE:
-The project needs to be rewritten completely in Rust, not typescript and tauri. rename the new Project DystoPad globally, create its own github repo, I'll delete the old one. Don't fix the current repo, instead create a new one in which you'll implement the changes and bugfixes below. create a new Folder on the same level as DystoBlocks, DystoPoly and Dystonotepad. once everything is fully converted, move the relevant docs to the new folder (DystoPad) and delete the old folder (Dystonotepad). also recreate a new icon. instead of "N", the new icon should have ".Md" displayed on it, in the same format.
+# TODO
+## Bugs
 
-# Bugs
-- when writing a bulleted list, if i press enter to start a new list entry and then tab to indent it, it temporarily becomes a heading in the preview. this resolves itself if i start to type
-- the styling for code blocks is incomplete. you'll find the jpeg images code styling shouldbe and code styling current for references. make sure the github styling is replicated perfectly
 
-# general changes:
-- the tab names for unsaved files are currently "Untitled". if a file is not saved, I want the title to be the first few words of the actual text, like how it is in notepad.exe. see tabnames.jpeg for references
-- the bar between preview and editor in split view should be movable to resize the individual windows. 
-- the dot in the tab to signal unsaved changes should not be yellow, it should be blue like the rest. remember that this app should be minimalistic
-- give it a gpl license
+## general changes:
+- ctrl + alt does not work the same as alt Gr. it should work for things like [,],{,}, etc (german keyboard)
+  - Postponed (2026-10-31). Why it's hard: Windows already turns Ctrl+Alt+8 into "[", but egui-winit, the library between Windows and the app, throws away any character typed while Ctrl is held, so that Ctrl+C doesn't type a "c" (`egui-winit` 0.37, `src/lib.rs`, the `is_cmd` check). AltGr works only because Windows doesn't report it as Ctrl. DystoPad never sees the character, so it can't put it back. The fix is one line in egui-winit, but that means building from a patched copy of egui (a fork or a copy in this repo) until egui releases the fix, which the owner doesn't want. Without a patch, DystoPad can rebuild only `[ ] { } \ |` from the key that was pressed; `@ € ~ µ` would still not work. Next time: check whether a newer egui has fixed it, or ask egui upstream to fix it.
+
+## Post work tasks:
+once you're done with these features, update CLAUDE.md, STATUS.md and the changelog. Give it a new version number and push to github. then run a local build as well so that the bare executable sits in the release folder. Then delete all finished items from TODO.md (this document).
