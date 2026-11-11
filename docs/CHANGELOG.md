@@ -2,6 +2,11 @@
 
 Versions are `major.minor.hotfix`. Each version is a `vX.Y.Z` tag on the Releases page, with a Windows installer, a portable Windows `.exe` and a Linux AppImage.
 
+## 1.2.1 (2026-11-11)
+
+- **Fixed:** on Windows, snapping the window onto a monitor with different scaling (Win+arrow keys, or dragging it to the screen's edge) no longer makes it jump back and forth between the two monitors. It now fills exactly the half or quarter of the screen it was snapped to.
+- **Fixed:** the window can snap to half of a monitor with less scaling than the one DystoPad started on, instead of staying wider than half.
+
 ## 1.2.0 (2026-11-11)
 
 - **Tabs move between windows,** as in Windows Notepad. Drag a tab off the strip and it opens in a window of its own, right where you let go of it. Drop it on another DystoPad window's tabs and it moves there. Drag it along the strip to change the order. A window's only tab moves the whole window.

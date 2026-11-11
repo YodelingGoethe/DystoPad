@@ -1,6 +1,6 @@
 [package]
 name = "dystopad"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "A small neon notepad with a Markdown mode"
@@ -22,9 +22,9 @@ open = "5"
 encoding_rs = "0.8"
 
 [target.'cfg(windows)'.dependencies]
-# Both already come with eframe; DystoPad needs winit's message hook and two Windows calls (`src/win32.rs`).
+# Both already come with eframe; DystoPad needs winit's message hook and a few Windows calls (`src/win32.rs`).
 winit = { version = "0.30", default-features = false }
-windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61", features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }
 
 [build-dependencies]
 winresource = "0.1"

@@ -1,4 +1,8 @@
-//! Two Windows messages that winit's message hook (`hook`) sees before winit and egui-winit get them wrong.
+//! Windows messages that winit and egui-winit get wrong.
+//!
+//! - A window whose DPI changes goes where Windows suggests (`follow_dpi_changes`).
+//!
+//! And two that winit's message hook (`hook`) sees first:
 //!
 //! - Ctrl+Alt types what AltGr types (`@ € { [ ] } \ ~ |` on a German keyboard), as everywhere in Windows. egui-winit
 //!   drops text typed while Ctrl is held, so that Ctrl+C doesn't type a "c"; here Windows says which character the
@@ -10,15 +14,62 @@
 use std::sync::Mutex;
 
 use egui::{Context, Event};
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows_sys::Win32::System::Threading::GetCurrentThreadId;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyState, GetKeyboardLayout, GetKeyboardState, ToUnicodeEx, VK_CONTROL, VK_LBUTTON, VK_LMENU,
 };
-use windows_sys::Win32::UI::WindowsAndMessaging::{MSG, WM_KEYDOWN, WM_SYSKEYDOWN};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CWPRETSTRUCT, CWPSTRUCT, CallNextHookEx, GetClassNameW, MSG, SWP_NOACTIVATE, SWP_NOZORDER,
+    SetWindowPos, SetWindowsHookExW, WH_CALLWNDPROC, WH_CALLWNDPROCRET, WM_DPICHANGED, WM_KEYDOWN,
+    WM_SYSKEYDOWN,
+};
 
 /// In `Win32::UI::Controls`, which windows-sys builds only for that feature.
 const WM_MOUSELEAVE: u32 = 0x02A3;
 
 static TYPED: Mutex<String> = Mutex::new(String::new());
+
+/// Call once, on the thread that runs the event loop.
+///
+/// When Windows moves a window to a monitor with another DPI itself (snapping, Win+arrow), it says so before the
+/// move. winit then nudges the window back onto the monitor it is still on, and the window jumps between the two.
+/// So it goes where Windows suggests, before winit handles the change (so winit finds it on the right monitor) and
+/// after (winit resizes it its own way).
+pub fn follow_dpi_changes() {
+    // winit's windows (by its default class name), not the file dialogs, which run on the same thread.
+    fn ours(window: HWND) -> bool {
+        let mut class = [0u16; 16];
+        let n = unsafe { GetClassNameW(window, class.as_mut_ptr(), class.len() as i32) };
+        String::from_utf16_lossy(&class[..n.max(0) as usize]) == "Window Class"
+    }
+    fn place(window: HWND, suggested: LPARAM) {
+        // Safety: WM_DPICHANGED's lParam is the suggested rect, valid while the message is handled.
+        let r = unsafe { &*(suggested as *const RECT) };
+        let (w, h) = (r.right - r.left, r.bottom - r.top);
+        let flags = SWP_NOZORDER | SWP_NOACTIVATE;
+        unsafe { SetWindowPos(window, std::ptr::null_mut(), r.left, r.top, w, h, flags) };
+    }
+    unsafe extern "system" fn before(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        let m = unsafe { &*(l as *const CWPSTRUCT) };
+        if code >= 0 && m.message == WM_DPICHANGED && ours(m.hwnd) {
+            place(m.hwnd, m.lParam);
+        }
+        unsafe { CallNextHookEx(std::ptr::null_mut(), code, w, l) }
+    }
+    unsafe extern "system" fn after(code: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        let m = unsafe { &*(l as *const CWPRETSTRUCT) };
+        if code >= 0 && m.message == WM_DPICHANGED && ours(m.hwnd) {
+            place(m.hwnd, m.lParam);
+        }
+        unsafe { CallNextHookEx(std::ptr::null_mut(), code, w, l) }
+    }
+    unsafe {
+        let thread = GetCurrentThreadId();
+        SetWindowsHookExW(WH_CALLWNDPROC, Some(before), std::ptr::null_mut(), thread);
+        SetWindowsHookExW(WH_CALLWNDPROCRET, Some(after), std::ptr::null_mut(), thread);
+    }
+}
 
 /// For winit's message hook: true keeps the message from winit.
 pub fn hook(msg: *const std::ffi::c_void) -> bool {

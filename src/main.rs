@@ -29,6 +29,8 @@ fn main() -> eframe::Result {
     if single_instance::hand_over(&files) {
         return Ok(());
     }
+    #[cfg(windows)]
+    win32::follow_dpi_changes();
     let options = eframe::NativeOptions {
         viewport: app::viewport().with_inner_size([1440.0, 900.0]),
         #[cfg(windows)]

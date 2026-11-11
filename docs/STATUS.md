@@ -4,8 +4,14 @@ Last updated: 2026-11-11
 
 ## Where things stand
 
-- **App:** DystoPad 1.2.0, on `main` since 2026-11-11 but not tagged yet: CI passed on Windows, but its Linux job failed three times that day because GitHub's Ubuntu runner couldn't reach Ubuntu's package servers, before anything was compiled. The owner tags it when CI passes on Linux. Tabs move between windows as in Windows Notepad: off the strip into a new window, onto another window's strip, or along the strip to reorder. The preview fills the window (Settings can keep GitHub's column in split view), and wide tables wrap their cells. Ctrl+Alt types what AltGr types on Windows. 1.1.0 (2026-10-31) moved the tabs into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
+- **App:** DystoPad 1.2.1, on `main` since 2026-11-11, not tagged yet. 1.2.0 wasn't tagged either: its Linux CI job failed three times because GitHub's Ubuntu runner couldn't reach Ubuntu's package servers, and those runs are gone from GitHub since. 1.2.1 fixes snapping on Windows across monitors with different scaling: the window no longer jumps between them, and it snaps to half of a monitor with less scaling. The owner tags it when CI passes on Linux. 1.2.0: tabs move between windows as in Windows Notepad: off the strip into a new window, onto another window's strip, or along the strip to reorder. The preview fills the window (Settings can keep GitHub's column in split view), and wide tables wrap their cells. Ctrl+Alt types what AltGr types on Windows. 1.1.0 (2026-10-31) moved the tabs into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
 - **Stack:** Rust 2024, eframe/egui 0.37 (wgpu), pulldown-cmark, syntect, rfd for the file dialogs, interprocess for the single instance; on Windows, winit's message hook and windows-sys (`src/win32.rs`).
+- Verified on 2026-11-11 for 1.2.1 (Windows 11, four monitors: the main one 2560×1440 at 125 %, one of the same size at 100 % to its right, 1920×1080 at 100 % to its left, a portrait one), driving the debug build with simulated keys and mouse and logging the window's rect:
+  - `cargo test` (42 tests) passes.
+  - Before the fix, Win+Right from the right half of the main screen left the window straddling both screens at the main screen's size (winit moved it back). Now Win+Right and Win+Left across all three landscape screens give exactly the half: 1280×1380 at 125 %, 1280×1392 and 960×1032 at 100 % (960 used to come out as 1125, the minimum width at 125 %).
+  - Dragging the window by the strip across screens: it follows the mouse and takes the new scale; for one moment in the crossing it has another size. Dragged to the top of the 100 % screen it maximizes there; dragged from there to the far left edge it snaps to 960×1032.
+  - A maximized window moved with Win+Shift+arrow across the 125 % and 100 % screens stays maximized and fills each; restored, it has its old size. A screenshot after snapping onto the 100 % screen shows the interface drawn at 100 %, filling the window.
+  - Not tried: snapping a second window (the same hook and code path), and fullscreen (F11) across monitors.
 - Verified on 2026-11-11 for 1.2.0 (Windows 11 at 125 % scaling, German keyboard), driving the debug build with simulated keys and mouse and checking screenshots:
   - `cargo test` (42 tests) passes.
   - Ctrl+left Alt with Q, E, 2, 3, 7, 8, 9, 0, ß, + and < types `@€²³{[]}\~|`, and the window stays open. AltGr+Q types one `@`. Ctrl+Alt+S does nothing, and Ctrl+A still selects all. This works in a dragged-out window too.
@@ -31,7 +37,7 @@ Last updated: 2026-11-11
   - Printing: Ctrl+P opens the page in the default browser (Firefox) with its print dialog. The page, rendered in headless Edge, matches GitHub's light style, task lists, alerts and footnotes included.
 - **Not yet verified:**
   - Several windows on Linux: on Wayland egui can't tell where windows are, so a tab dropped off the strip always opens a new window wherever the compositor puts it, and a window's only tab can't move it. Dropping a tab between monitors with different scaling (the window positions are compared in pixels, so it should work).
-  - The title bar on Linux (X11 and Wayland), dragging the window between monitors with different scaling, and Windows' window menu (Alt+Space, right-click on the strip; probably gone with the system frame).
+  - The title bar on Linux (X11 and Wayland), dragging the window between monitors with different scaling on Linux, and Windows' window menu (Alt+Space, right-click on the strip; probably gone with the system frame).
   - The setup through its pages (only the silent install was run), and the portable exe on another PC.
   - A web link clicked in the preview opening in the browser (it uses the same call as printing), and zoom with Ctrl+mouse wheel.
   - Linux: CI builds and tests it; the AppImage is first built by the release workflow and hasn't been started on a Linux desktop. macOS: not built.
@@ -46,11 +52,11 @@ Last updated: 2026-11-11
 - Table cells wrap when the table is too wide, but a centered or right-aligned column aligns the cell's text block, not each wrapped line.
 - Undo history isn't kept across restarts. The window size and position aren't remembered; it opens at 1440×900, or maximized on small screens.
 - Unsigned builds: Windows SmartScreen warns on the first start.
-- The window draws its own title bar, so Windows 11's snap layouts don't pop up over the maximize button. Dragging the window to the top of the screen still maximizes it (tested); Win+Z and snapping to the sides weren't tried. The window resizes from its outermost 4 px (12 px in the corners) instead of Windows' wider invisible border.
+- The window draws its own title bar, so Windows 11's snap layouts don't pop up over the maximize button. Dragging the window to the top or the sides of the screen and Win+arrow snap it (tested); Win+Z wasn't tried. The window resizes from its outermost 4 px (12 px in the corners) instead of Windows' wider invisible border.
 
 ## Next steps (suggested, not yet agreed with the owner)
 
-0. Re-run the failed Linux CI job (`gh run rerun 43032715611 --failed`). Once it passes and the owner says so, tag `v1.2.0` and push the tag; if that's not on 2026-11-11, change the date of 1.2.0 in the changelog first.
+0. Check that CI passes on Linux for the 1.2.1 push. Once it does and the owner says so, tag `v1.2.1` and push the tag (1.2.0 was never released, so its changelog entry goes out with 1.2.1's); if that's not on 2026-11-11, change the date of 1.2.1 in the changelog first.
 1. Use the new title bar for a while: moving, snapping, resizing, several monitors.
 2. Install the setup from the release, check "Open with" for `.txt` and `.md`, then uninstall Dystonotepad.
 3. Start the AppImage on a Linux desktop, and check the title bar there.

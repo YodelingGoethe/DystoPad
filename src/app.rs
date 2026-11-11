@@ -262,12 +262,15 @@ struct Place {
     centers: Vec<f32>,
 }
 
+/// The smallest window, in points.
+const MIN_SIZE: [f32; 2] = [900.0, 540.0];
+
 /// How every DystoPad window is opened.
 pub fn viewport() -> ViewportBuilder {
     let viewport = ViewportBuilder::default()
         .with_title("DystoPad")
         .with_app_id("dystopad")
-        .with_min_inner_size([900.0, 540.0])
+        .with_min_inner_size(MIN_SIZE)
         // The tab strip is the title bar (`Window::tab_strip`).
         .with_decorations(false)
         .with_drag_and_drop(true);
@@ -515,6 +518,8 @@ struct Window {
     fullscreen: bool,
     zoom_wheel: f32,
     frames: u32,
+    /// Pixels per point in the last frame.
+    scale: f32,
     /// The tab the strip last scrolled into view.
     shown_tab: u64,
     drag: Option<TabDrag>,
@@ -557,6 +562,7 @@ impl Window {
             fullscreen: false,
             zoom_wheel: 1.0,
             frames: 0,
+            scale: 0.0,
             shown_tab: 0,
             drag: None,
             dropped: None,
@@ -2161,6 +2167,15 @@ impl Window {
                 }
                 self.frames = 5;
             }
+        }
+        // egui-winit gives winit the smallest size in pixels, so on a monitor with less scaling the window
+        // couldn't snap to half of it.
+        let scale = ctx.pixels_per_point();
+        if self.scale != scale {
+            if self.scale != 0.0 {
+                ctx.send_viewport_cmd(ViewportCommand::MinInnerSize(MIN_SIZE.into()));
+            }
+            self.scale = scale;
         }
         #[cfg(windows)]
         crate::win32::type_ctrl_alt(&ctx);
