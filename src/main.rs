@@ -15,6 +15,8 @@ mod search;
 mod session;
 mod single_instance;
 mod theme;
+#[cfg(windows)]
+mod win32;
 
 use std::path::PathBuf;
 
@@ -27,19 +29,13 @@ fn main() -> eframe::Result {
     if single_instance::hand_over(&files) {
         return Ok(());
     }
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title("DystoPad")
-        .with_app_id("dystopad")
-        .with_inner_size([1440.0, 900.0])
-        .with_min_inner_size([900.0, 540.0])
-        // The tab strip is the title bar (`App::tab_strip`).
-        .with_decorations(false)
-        .with_drag_and_drop(true);
-    if let Ok(icon) = eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/icon.png")) {
-        viewport = viewport.with_icon(icon);
-    }
     let options = eframe::NativeOptions {
-        viewport,
+        viewport: app::viewport().with_inner_size([1440.0, 900.0]),
+        #[cfg(windows)]
+        event_loop_builder: Some(Box::new(|builder| {
+            use winit::platform::windows::EventLoopBuilderExtWindows;
+            builder.with_msg_hook(win32::hook);
+        })),
         ..Default::default()
     };
     eframe::run_native(

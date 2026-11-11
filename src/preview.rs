@@ -69,13 +69,15 @@ fn anchor(target: &str) -> String {
 }
 
 impl Preview {
-    /// Draws the document. Returns a clicked link that isn't an anchor in it: a web address or a file.
+    /// Draws the document, in GitHub's 980 px column or, if `full_width`, across the whole pane.
+    /// Returns a clicked link that isn't an anchor in it: a web address or a file.
     pub fn show(
         &mut self,
         ui: &mut Ui,
         text: &str,
         path: Option<&Path>,
         zoom: f32,
+        full_width: bool,
         id: impl egui::AsIdSalt,
     ) -> Option<String> {
         let h = hash(text);
@@ -109,7 +111,11 @@ impl Preview {
                     } else {
                         45.0 * z
                     };
-                    let outer = width.min(980.0 * z);
+                    let outer = if full_width {
+                        width
+                    } else {
+                        width.min(980.0 * z)
+                    };
                     let content = (outer - 2.0 * pad).max(40.0);
                     ui.add_space(32.0 * z);
                     ui.horizontal_top(|ui| {
@@ -140,7 +146,7 @@ struct Render<'a> {
     code: &'a mut HashMap<u64, Arc<Vec<Span>>>,
     scroll_to: &'a mut Option<String>,
     clicked: Option<String>,
-    /// Numbers the code blocks and tables, for their scroll positions.
+    /// Numbers the code blocks, for their scroll positions.
     n: usize,
 }
 
@@ -701,79 +707,80 @@ impl Render<'_> {
         if cols == 0 {
             return;
         }
-        // Tables keep their natural width, like GitHub's (`width: max-content`), and scroll when wider than the page.
+        // Half a line of room around it, for the outer borders.
+        let border = z.max(1.0);
         let lay = |r: &Self,
                    cells: &[Inlines],
-                   bold: bool|
+                   bold: bool,
+                   widths: Option<&[f32]>|
          -> Vec<(Arc<Galley>, Vec<(Range<usize>, Style)>)> {
             (0..cols)
                 .map(|c| {
                     let (text, runs) = cells.get(c).map(flatten).unwrap_or_default();
+                    let wrap = widths.map_or(f32::INFINITY, |w| (w[c] - 2.0 * pad.x).max(1.0));
                     (
-                        ui.painter().layout_job(r.job(
-                            &text,
-                            &runs,
-                            Look { bold, ..look },
-                            f32::INFINITY,
-                        )),
+                        ui.painter()
+                            .layout_job(r.job(&text, &runs, Look { bold, ..look }, wrap)),
                         runs,
                     )
                 })
                 .collect()
         };
-        let mut grid = vec![lay(self, head, true)];
-        grid.extend(rows.iter().map(|row| lay(self, row, false)));
-        let line = look.size * look.line;
-        let widths: Vec<f32> = (0..cols)
+        let layout = |r: &Self, widths: Option<&[f32]>| {
+            let mut grid = vec![lay(r, head, true, widths)];
+            grid.extend(rows.iter().map(|row| lay(r, row, false, widths)));
+            grid
+        };
+        // Tables keep their natural width, like GitHub's (`width: max-content`). A wider one wraps its cells
+        // instead of scrolling as GitHub's does.
+        let mut grid = layout(self, None);
+        let natural: Vec<f32> = (0..cols)
             .map(|c| grid.iter().map(|row| row[c].0.size().x).fold(0.0, f32::max) + 2.0 * pad.x)
             .collect();
+        let widths = fit(&natural, ui.available_width() - border);
+        if widths != natural {
+            grid = layout(self, Some(&widths));
+        }
+        let line = look.size * look.line;
         let heights: Vec<f32> = grid
             .iter()
             .map(|row| row.iter().map(|(g, _)| g.size().y).fold(line, f32::max) + 2.0 * pad.y)
             .collect();
         let size = vec2(widths.iter().sum(), heights.iter().sum());
-        self.n += 1;
-        ScrollArea::horizontal()
-            .id_salt(("table", self.n))
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                // Half a line of room around it, for the outer borders.
-                let (outer, _) =
-                    ui.allocate_exact_size(size + Vec2::splat(z.max(1.0)), Sense::hover());
-                if !ui.is_rect_visible(outer) {
-                    return;
-                }
-                let rect = Rect::from_min_size(outer.min + Vec2::splat(z.max(1.0) / 2.0), size);
-                let mut y = rect.top();
-                for (r, (row, height)) in grid.into_iter().zip(&heights).enumerate() {
-                    let row_rect = Rect::from_min_size(pos2(rect.left(), y), vec2(size.x, *height));
-                    ui.painter().rect_filled(
-                        row_rect,
-                        0.0,
-                        if r > 0 && r % 2 == 0 { CODE_BG } else { BG },
-                    );
-                    let mut x = rect.left();
-                    for (c, (galley, runs)) in row.into_iter().enumerate() {
-                        let cell = Rect::from_min_size(pos2(x, y), vec2(widths[c], *height));
-                        ui.painter().rect_stroke(
-                            cell,
-                            0.0,
-                            Stroke::new(z.max(1.0), BORDER),
-                            // Neighbours share the line, as with `border-collapse`.
-                            egui::StrokeKind::Middle,
-                        );
-                        let free = widths[c] - 2.0 * pad.x - galley.size().x;
-                        let shift = match aligns.get(c) {
-                            Some(Alignment::Center) => free / 2.0,
-                            Some(Alignment::Right) => free,
-                            _ => 0.0,
-                        };
-                        self.text(ui, pos2(x + pad.x + shift, y + pad.y), galley, &runs);
-                        x += widths[c];
-                    }
-                    y += height;
-                }
-            });
+        let (outer, _) = ui.allocate_exact_size(size + Vec2::splat(border), Sense::hover());
+        if !ui.is_rect_visible(outer) {
+            return;
+        }
+        let rect = Rect::from_min_size(outer.min + Vec2::splat(border / 2.0), size);
+        let mut y = rect.top();
+        for (r, (row, height)) in grid.into_iter().zip(&heights).enumerate() {
+            let row_rect = Rect::from_min_size(pos2(rect.left(), y), vec2(size.x, *height));
+            ui.painter().rect_filled(
+                row_rect,
+                0.0,
+                if r > 0 && r % 2 == 0 { CODE_BG } else { BG },
+            );
+            let mut x = rect.left();
+            for (c, (galley, runs)) in row.into_iter().enumerate() {
+                let cell = Rect::from_min_size(pos2(x, y), vec2(widths[c], *height));
+                ui.painter().rect_stroke(
+                    cell,
+                    0.0,
+                    Stroke::new(border, BORDER),
+                    // Neighbours share the line, as with `border-collapse`.
+                    egui::StrokeKind::Middle,
+                );
+                let free = widths[c] - 2.0 * pad.x - galley.size().x;
+                let shift = match aligns.get(c) {
+                    Some(Alignment::Center) => free / 2.0,
+                    Some(Alignment::Right) => free,
+                    _ => 0.0,
+                };
+                self.text(ui, pos2(x + pad.x + shift, y + pad.y), galley, &runs);
+                x += widths[c];
+            }
+            y += height;
+        }
     }
 
     fn footnotes(&mut self, ui: &mut Ui, doc: &Doc) {
@@ -896,6 +903,24 @@ fn alpha(mut n: u64) -> String {
     String::from_utf8(out).unwrap()
 }
 
+/// Narrows a table's columns to `room`, roughly as browsers do: the columns narrower than an even share keep
+/// their width, and the wider ones share the rest evenly.
+fn fit(natural: &[f32], room: f32) -> Vec<f32> {
+    let mut sorted = natural.to_vec();
+    sorted.sort_by(f32::total_cmp);
+    let (mut left, mut n) = (room, sorted.len() as f32);
+    let mut cap = f32::INFINITY;
+    for w in sorted {
+        if w * n > left {
+            cap = left / n;
+            break;
+        }
+        left -= w;
+        n -= 1.0;
+    }
+    natural.iter().map(|w| w.min(cap)).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -907,6 +932,13 @@ mod tests {
             ["i", "iv", "ix", "xiv", "mmxxiv"]
         );
         assert_eq!([1, 26, 27, 52].map(alpha), ["a", "z", "aa", "az"]);
+    }
+
+    #[test]
+    fn wide_tables_narrow_their_widest_columns() {
+        assert_eq!(fit(&[100.0, 200.0], 1000.0), [100.0, 200.0]);
+        assert_eq!(fit(&[50.0, 300.0, 600.0], 600.0), [50.0, 275.0, 275.0]);
+        assert_eq!(fit(&[400.0, 400.0], 300.0), [150.0, 150.0]);
     }
 
     #[test]

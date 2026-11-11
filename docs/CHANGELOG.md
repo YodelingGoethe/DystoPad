@@ -2,6 +2,14 @@
 
 Versions are `major.minor.hotfix`. Each version is a `vX.Y.Z` tag on the Releases page, with a Windows installer, a portable Windows `.exe` and a Linux AppImage.
 
+## 1.2.0 (2026-11-11)
+
+- **Tabs move between windows,** as in Windows Notepad. Drag a tab off the strip and it opens in a window of its own, right where you let go of it. Drop it on another DystoPad window's tabs and it moves there. Drag it along the strip to change the order. A window's only tab moves the whole window.
+- **Several windows:** closing one of them asks about its unsaved tabs. Closing the last one doesn't ask, and the next start shows the tabs of every window that was open in one window.
+- **The preview fills the window** instead of GitHub's 980-pixel column. In Settings you can keep the narrow column in Split view.
+- **Wide tables fit the preview:** their cells wrap instead of the table scrolling sideways.
+- **Fixed:** on Windows, Ctrl+Alt types what AltGr types (`@ € ² ³ { [ ] } \ ~ |` on a German keyboard). Ctrl+Alt+Q used to close the window instead of typing `@`.
+
 ## 1.1.0 (2026-10-31)
 
 - **The tabs sit in the title bar,** as in Windows Notepad, next to DystoPad's own minimize, maximize and close buttons. Drag the empty space beside the tabs to move the window, double-click it to maximize, and drag the window's edges to resize it.

@@ -46,6 +46,8 @@ pub struct Settings {
     pub wrap: bool,
     /// The editor's share of the width in split view.
     pub split: f32,
+    /// The preview fills its pane in split view too, instead of GitHub's 980 px column. In preview view it always does.
+    pub wide_split: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +57,7 @@ impl Default for Settings {
             zoom: 100,
             wrap: true,
             split: 0.5,
+            wide_split: true,
         }
     }
 }

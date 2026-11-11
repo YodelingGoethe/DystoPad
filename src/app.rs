@@ -1,7 +1,8 @@
-//! The window: tabs, menus, the editor and preview, the status bar, dialogs and the session.
+//! The windows: tabs, menus, the editor and preview, the status bar, dialogs and the session.
 
 use std::ops::Range;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
@@ -10,9 +11,9 @@ use egui::epaint::CornerRadius;
 use egui::text::{CCursor, LayoutJob, TextWrapping};
 use egui::{
     Align, Align2, Area, Button, CentralPanel, Color32, ComboBox, Context, CursorIcon, Event,
-    FontId, Frame, Id, Key, Layout, Margin, Modal, Modifiers, Order, Panel, PointerButton, Popup,
-    Rect, ResizeDirection, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui, UiBuilder,
-    ViewportCommand, pos2, vec2,
+    FontId, Frame, Id, Key, LayerId, Layout, Margin, Modal, Modifiers, Order, Panel, PointerButton,
+    Popup, Pos2, Rect, ResizeDirection, RichText, ScrollArea, Sense, Stroke, TextEdit, Ui,
+    UiBuilder, Vec2, ViewportBuilder, ViewportCommand, ViewportId, pos2, vec2,
 };
 
 use crate::format::{self, ListKind};
@@ -51,9 +52,11 @@ pub struct Tab {
 }
 
 impl Tab {
-    fn new(id: u64) -> Self {
+    fn new() -> Self {
+        // Unique across windows: a tab keeps its id, and with it the editor's state, when it moves to another.
+        static NEXT: AtomicU64 = AtomicU64::new(1);
         Self {
-            id,
+            id: NEXT.fetch_add(1, Ordering::Relaxed),
             path: None,
             text: String::new(),
             saved: Some(String::new()),
@@ -94,6 +97,50 @@ impl Tab {
 
     fn shown_view(&self) -> View {
         if self.md { self.view } else { View::Editor }
+    }
+
+    fn restore(saved: SavedTab) -> Self {
+        let mut tab = Self::new();
+        tab.md = saved.md;
+        tab.view = saved.view;
+        tab.crlf = saved.crlf;
+        tab.bom = saved.bom;
+        match saved.path.as_deref().map(files::read) {
+            // An unchanged file is read again, in case it changed on disk.
+            Some(Ok(disk)) => {
+                tab.saved = Some(disk.text.clone());
+                if saved.dirty {
+                    tab.set_text(saved.text);
+                } else {
+                    (tab.crlf, tab.bom) = (disk.crlf, disk.bom);
+                    tab.set_text(disk.text);
+                }
+            }
+            // A file that is gone keeps its text and counts as unsaved.
+            Some(Err(_)) => {
+                tab.saved = None;
+                tab.set_text(saved.text);
+            }
+            None => tab.set_text(saved.text),
+        }
+        tab.path = saved.path;
+        let cursor = saved.cursor.min(tab.chars);
+        tab.cursor = cursor..cursor;
+        tab.restore_cursor = true;
+        tab
+    }
+
+    fn saved(&self) -> SavedTab {
+        SavedTab {
+            path: self.path.clone(),
+            text: self.text.clone(),
+            dirty: self.dirty(),
+            md: self.md,
+            view: self.view,
+            cursor: self.cursor.end,
+            crlf: self.crlf,
+            bom: self.bom,
+        }
     }
 }
 
@@ -185,27 +232,60 @@ struct Find {
     cache: (u64, Vec<Range<usize>>),
 }
 
+/// A tab being dragged by the mouse.
+struct TabDrag {
+    id: u64,
+    /// Where the mouse holds it, from its top left corner.
+    grab: Vec2,
+    /// Where the mouse went down.
+    start: Pos2,
+    /// Where it is, or was last seen.
+    at: Pos2,
+    /// Off the strip: let go there, it leaves the window.
+    out: bool,
+}
+
+/// A tab let go of outside its strip.
+struct Dropped {
+    id: u64,
+    /// On the screen, in pixels.
+    at: Option<Pos2>,
+    /// How far the mouse moved, in the window's points.
+    moved: Vec2,
+}
+
+/// Where a window and its tabs are on the screen, in pixels, so tabs dragged from another window can find it.
+struct Place {
+    window: Rect,
+    strip: Rect,
+    /// The middle of each tab.
+    centers: Vec<f32>,
+}
+
+/// How every DystoPad window is opened.
+pub fn viewport() -> ViewportBuilder {
+    let viewport = ViewportBuilder::default()
+        .with_title("DystoPad")
+        .with_app_id("dystopad")
+        .with_min_inner_size([900.0, 540.0])
+        // The tab strip is the title bar (`Window::tab_strip`).
+        .with_decorations(false)
+        .with_drag_and_drop(true);
+    match eframe::icon_data::from_png_bytes(include_bytes!("../assets/icon/icon.png")) {
+        Ok(icon) => viewport.with_icon(icon),
+        Err(_) => viewport,
+    }
+}
+
+/// All windows: the one DystoPad starts with (eframe's root viewport) and the ones tabs were dragged out into.
 pub struct App {
-    tabs: Vec<Tab>,
-    active: usize,
-    next_id: u64,
+    windows: Vec<Window>,
     settings: Settings,
-    actions: Vec<Action>,
-    dialog: Option<Dialog>,
-    find: Option<Find>,
-    toasts: Vec<(String, Instant)>,
     inbox: Receiver<Vec<PathBuf>>,
-    /// Events for the editor's text field (undo, redo), handed to it in the frame they are run.
-    inject: Vec<Event>,
-    focus_editor: bool,
-    scroll_to_cursor: bool,
-    session_due: Option<Instant>,
-    title: String,
-    fullscreen: bool,
-    zoom_wheel: f32,
-    frames: u32,
-    /// The tab the strip last scrolled into view.
-    shown_tab: u64,
+    /// The window that last had the focus: files from a second start open there.
+    focused: ViewportId,
+    /// Numbers the windows' viewports.
+    opened: u64,
 }
 
 impl App {
@@ -218,18 +298,257 @@ impl App {
 
         let (send, inbox) = std::sync::mpsc::channel();
         let wake = ctx.clone();
-        single_instance::listen(send, move || wake.request_repaint());
+        single_instance::listen(send, move || wake.request_repaint_of(ViewportId::ROOT));
 
-        let mut app = Self {
-            tabs: Vec::new(),
+        let settings = session::load_settings();
+        let saved = session::load_session();
+        let tabs = saved.tabs.into_iter().map(Tab::restore).collect();
+        let mut root = Window::new(ViewportId::ROOT, viewport(), settings.clone(), tabs);
+        root.active = saved.active.min(root.tabs.len() - 1);
+        for file in files {
+            root.open_path(file);
+        }
+        Self {
+            windows: vec![root],
+            settings,
+            inbox,
+            focused: ViewportId::ROOT,
+            opened: 0,
+        }
+    }
+
+    fn shown(&self) -> usize {
+        self.windows.iter().filter(|w| !w.hidden).count()
+    }
+
+    /// The window that last had the focus, or else the first one shown.
+    fn focused_window(&self) -> usize {
+        let shown = |w: &Window| !w.hidden;
+        self.windows
+            .iter()
+            .position(|w| shown(w) && w.viewport == self.focused)
+            .or_else(|| self.windows.iter().position(shown))
+            .unwrap_or(0)
+    }
+
+    /// The tabs of all windows, as one window, which is how the next start shows them.
+    fn save_session(&mut self) {
+        let focused = self.focused_window();
+        let mut session = Session::default();
+        for (k, w) in self.windows.iter().enumerate().filter(|(_, w)| !w.hidden) {
+            if k == focused {
+                session.active = session.tabs.len() + w.active;
+            }
+            session.tabs.extend(w.tabs.iter().map(Tab::saved));
+        }
+        for w in &mut self.windows {
+            w.session_due = None;
+        }
+        if let Err(e) = session::save_session(&session) {
+            self.windows[focused].toast(format!("session.json: {e}"));
+        }
+    }
+
+    /// Moves a tab let go of outside its strip: into the window it was dropped on, or else into a new window
+    /// there. A window's only tab moves the window instead.
+    fn drop_tab(&mut self, ctx: &Context, from: usize, drop: Dropped) {
+        let source = self.windows[from].viewport;
+        let over = |w: &Window| {
+            let window = w.place.as_ref().map(|p| p.window);
+            drop.at.zip(window).is_some_and(|(at, r)| r.contains(at))
+        };
+        let (outer, inner, maximized) = ctx.input_for(source, |i| {
+            let v = i.viewport();
+            let maximized = v.maximized == Some(true) || v.fullscreen == Some(true);
+            (v.outer_rect, v.inner_rect, maximized)
+        });
+        // On top of the others, so a drop on it doesn't go to a window behind it.
+        let into = (!over(&self.windows[from]))
+            .then(|| {
+                self.windows
+                    .iter()
+                    .position(|w| w.viewport != source && !w.hidden && over(w))
+            })
+            .flatten();
+        if let Some(k) = into {
+            let Some(tab) = self.windows[from].take_tab_id(drop.id) else {
+                return;
+            };
+            let to = &mut self.windows[k];
+            let at = drop.at.unwrap_or_default();
+            let i = match &to.place {
+                Some(p) if p.strip.contains(at) => p.centers.iter().filter(|c| **c < at.x).count(),
+                _ => to.tabs.len(),
+            };
+            to.insert_tab(i, tab);
+            ctx.send_viewport_cmd_to(to.viewport, ViewportCommand::Focus);
+        } else if self.windows[from].tabs.len() == 1 {
+            if let Some(outer) = outer {
+                let to = outer.min + drop.moved;
+                ctx.send_viewport_cmd_to(source, ViewportCommand::OuterPosition(to));
+            }
+        } else if let Some(tab) = self.windows[from].take_tab_id(drop.id) {
+            let mut builder = viewport();
+            if let Some(outer) = outer {
+                builder = builder.with_position(outer.min + drop.moved);
+            }
+            if let Some(inner) = inner {
+                // Out of a maximized window, as a window that leaves some of it in sight.
+                let size = inner.size() * if maximized { 0.7 } else { 1.0 };
+                builder = builder.with_inner_size(size);
+            }
+            self.opened += 1;
+            let id = ViewportId::from_hash_of(("window", self.opened));
+            let mut w = Window::new(id, builder, self.settings.clone(), vec![tab]);
+            // Only the first window starts maximized on small screens.
+            w.frames = 5;
+            self.windows.push(w);
+            self.focused = id;
+        }
+    }
+
+    /// Closes the windows that are gone. The last one ends DystoPad, and the session keeps its tabs.
+    fn close_windows(&mut self, ctx: &Context) {
+        let mut k = 0;
+        while k < self.windows.len() {
+            if !self.windows[k].gone {
+                k += 1;
+                continue;
+            }
+            if self.shown() == 1 {
+                self.save_session();
+                ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Close);
+                return;
+            }
+            if k == 0 {
+                // eframe ends with its root window, so the first window hides instead, and draws the others.
+                let mut root = Window::new(
+                    ViewportId::ROOT,
+                    viewport(),
+                    self.settings.clone(),
+                    Vec::new(),
+                );
+                root.hidden = true;
+                self.windows[0] = root;
+                ctx.send_viewport_cmd_to(ViewportId::ROOT, ViewportCommand::Visible(false));
+                k += 1;
+            } else {
+                self.windows.remove(k);
+            }
+            self.save_session();
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+        let ctx = ui.ctx().clone();
+        while let Ok(files) = self.inbox.try_recv() {
+            let w = self.focused_window();
+            let w = &mut self.windows[w];
+            for file in files {
+                w.open_path(file);
+            }
+            ctx.send_viewport_cmd_to(w.viewport, ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd_to(w.viewport, ViewportCommand::Focus);
+        }
+        let alone = self.shown() == 1;
+        for (k, w) in self.windows.iter_mut().enumerate() {
+            if w.hidden {
+                continue;
+            }
+            // A setting changed in one window applies to all.
+            w.settings.clone_from(&self.settings);
+            if k == 0 {
+                w.ui(ui, alone);
+            } else {
+                let builder = w.builder.clone();
+                ctx.show_viewport_immediate(w.viewport, builder, |ui, _| w.ui(ui, alone));
+            }
+            if w.settings != self.settings {
+                self.settings.clone_from(&w.settings);
+            }
+            if ctx.input_for(w.viewport, |i| i.focused) {
+                self.focused = w.viewport;
+            }
+        }
+        for k in 0..self.windows.len() {
+            if let Some(drop) = self.windows[k].dropped.take() {
+                self.drop_tab(&ctx, k, drop);
+            }
+        }
+        self.close_windows(&ctx);
+        if let Some(due) = self.windows.iter().filter_map(|w| w.session_due).min() {
+            let now = Instant::now();
+            if now >= due {
+                self.save_session();
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
+    }
+
+    fn on_exit(&mut self) {
+        self.save_session();
+    }
+}
+
+/// One window: its tabs, menus, editor and preview, dialogs.
+struct Window {
+    viewport: ViewportId,
+    /// How it was opened: egui wants it each frame for the windows after the first.
+    builder: ViewportBuilder,
+    tabs: Vec<Tab>,
+    active: usize,
+    /// A copy of `App::settings`.
+    settings: Settings,
+    actions: Vec<Action>,
+    dialog: Option<Dialog>,
+    find: Option<Find>,
+    toasts: Vec<(String, Instant)>,
+    /// Events for the editor's text field (undo, redo), handed to it in the frame they are run.
+    inject: Vec<Event>,
+    focus_editor: bool,
+    scroll_to_cursor: bool,
+    session_due: Option<Instant>,
+    title: String,
+    fullscreen: bool,
+    zoom_wheel: f32,
+    frames: u32,
+    /// The tab the strip last scrolled into view.
+    shown_tab: u64,
+    drag: Option<TabDrag>,
+    /// For `App` to move.
+    dropped: Option<Dropped>,
+    place: Option<Place>,
+    /// Closing tab by tab, asking about each unsaved one.
+    closing: bool,
+    /// Has no tabs left, or was closed as the last window: `App` closes it.
+    gone: bool,
+    /// The first window, closed while others stay open.
+    hidden: bool,
+}
+
+impl Window {
+    fn new(
+        viewport: ViewportId,
+        builder: ViewportBuilder,
+        settings: Settings,
+        mut tabs: Vec<Tab>,
+    ) -> Self {
+        if tabs.is_empty() {
+            tabs.push(Tab::new());
+        }
+        Self {
+            viewport,
+            builder,
+            tabs,
             active: 0,
-            next_id: 1,
-            settings: session::load_settings(),
+            settings,
             actions: Vec::new(),
             dialog: None,
             find: None,
             toasts: Vec::new(),
-            inbox,
             inject: Vec::new(),
             focus_editor: true,
             scroll_to_cursor: false,
@@ -239,21 +558,13 @@ impl App {
             zoom_wheel: 1.0,
             frames: 0,
             shown_tab: 0,
-        };
-        let saved = session::load_session();
-        for tab in saved.tabs {
-            let tab = app.restore(tab);
-            app.tabs.push(tab);
+            drag: None,
+            dropped: None,
+            place: None,
+            closing: false,
+            gone: false,
+            hidden: false,
         }
-        if app.tabs.is_empty() {
-            let tab = app.blank();
-            app.tabs.push(tab);
-        }
-        app.active = saved.active.min(app.tabs.len() - 1);
-        for file in files {
-            app.open_path(file);
-        }
-        app
     }
 
     fn t(&self) -> &'static Dict {
@@ -268,69 +579,9 @@ impl App {
         self.settings.zoom as f32 / 100.0
     }
 
-    fn blank(&mut self) -> Tab {
-        self.next_id += 1;
-        Tab::new(self.next_id)
-    }
-
-    fn restore(&mut self, saved: SavedTab) -> Tab {
-        let mut tab = self.blank();
-        tab.md = saved.md;
-        tab.view = saved.view;
-        tab.crlf = saved.crlf;
-        tab.bom = saved.bom;
-        match saved.path.as_deref().map(files::read) {
-            // An unchanged file is read again, in case it changed on disk.
-            Some(Ok(disk)) => {
-                tab.saved = Some(disk.text.clone());
-                if saved.dirty {
-                    tab.set_text(saved.text);
-                } else {
-                    (tab.crlf, tab.bom) = (disk.crlf, disk.bom);
-                    tab.set_text(disk.text);
-                }
-            }
-            // A file that is gone keeps its text and counts as unsaved.
-            Some(Err(_)) => {
-                tab.saved = None;
-                tab.set_text(saved.text);
-            }
-            None => tab.set_text(saved.text),
-        }
-        tab.path = saved.path;
-        let cursor = saved.cursor.min(tab.chars);
-        tab.cursor = cursor..cursor;
-        tab.restore_cursor = true;
-        tab
-    }
-
     /// Schedules the session to be written, once typing pauses.
     fn touch(&mut self) {
         self.session_due = Some(Instant::now() + Duration::from_millis(800));
-    }
-
-    fn save_session(&mut self) {
-        self.session_due = None;
-        let session = Session {
-            active: self.active,
-            tabs: self
-                .tabs
-                .iter()
-                .map(|t| SavedTab {
-                    path: t.path.clone(),
-                    text: t.text.clone(),
-                    dirty: t.dirty(),
-                    md: t.md,
-                    view: t.view,
-                    cursor: t.cursor.end,
-                    crlf: t.crlf,
-                    bom: t.bom,
-                })
-                .collect(),
-        };
-        if let Err(e) = session::save_session(&session) {
-            self.toast(format!("session.json: {e}"));
-        }
     }
 
     fn save_settings(&mut self) {
@@ -362,7 +613,7 @@ impl App {
         match files::read(&path) {
             Err(e) => self.toast(fill(self.t().open_failed, &[&name, &e])),
             Ok(disk) => {
-                let mut tab = self.blank();
+                let mut tab = Tab::new();
                 tab.md = files::is_markdown(&path);
                 tab.view = if tab.md { View::Preview } else { View::Split };
                 (tab.crlf, tab.bom) = (disk.crlf, disk.bom);
@@ -471,31 +722,54 @@ impl App {
         self.write(i, path)
     }
 
-    fn close_tab(&mut self, ctx: &Context, id: u64) {
+    fn close_tab(&mut self, id: u64) {
         let Some(i) = self.tabs.iter().position(|t| t.id == id) else {
             return;
         };
         if self.tabs[i].dirty() {
             self.dialog = Some(Dialog::SavePrompt(id));
         } else {
-            self.remove_tab(ctx, i);
+            self.take_tab(i);
         }
     }
 
-    /// Closing the last tab closes the window, as in Notepad.
-    fn remove_tab(&mut self, ctx: &Context, i: usize) {
-        self.tabs.remove(i);
-        if self.tabs.is_empty() {
-            self.save_session();
-            ctx.send_viewport_cmd(ViewportCommand::Close);
-            let tab = self.blank();
-            self.tabs.push(tab);
-            return;
+    /// Closes the tabs one by one while the window closes, and asks about each unsaved one.
+    fn close_tabs(&mut self) {
+        while self.closing && self.dialog.is_none() && !self.gone {
+            if self.tabs[0].dirty() {
+                self.active = 0;
+                self.dialog = Some(Dialog::SavePrompt(self.tabs[0].id));
+            } else {
+                self.take_tab(0);
+            }
         }
-        if self.active > i || self.active == self.tabs.len() {
+    }
+
+    /// Takes a tab out of the window, to close or move it. Without its last tab the window closes, as in Notepad.
+    fn take_tab(&mut self, i: usize) -> Tab {
+        let tab = self.tabs.remove(i);
+        if self.tabs.is_empty() {
+            self.gone = true;
+            self.tabs.push(Tab::new());
+        } else if self.active > i || self.active == self.tabs.len() {
             self.active -= 1;
         }
         self.focus_editor = true;
+        self.touch();
+        tab
+    }
+
+    fn take_tab_id(&mut self, id: u64) -> Option<Tab> {
+        let i = self.tabs.iter().position(|t| t.id == id)?;
+        Some(self.take_tab(i))
+    }
+
+    fn insert_tab(&mut self, i: usize, tab: Tab) {
+        let i = i.min(self.tabs.len());
+        self.tabs.insert(i, tab);
+        self.active = i;
+        self.focus_editor = true;
+        self.scroll_to_cursor = true;
         self.touch();
     }
 
@@ -518,8 +792,7 @@ impl App {
         let t = self.t();
         match action {
             Action::NewTab => {
-                let tab = self.blank();
-                self.tabs.push(tab);
+                self.tabs.push(Tab::new());
                 self.active = self.tabs.len() - 1;
                 self.focus_editor = true;
                 self.touch();
@@ -542,7 +815,7 @@ impl App {
                     self.toast(fill(t.print_failed, &[&e]));
                 }
             }
-            Action::Close(id) => self.close_tab(ctx, id),
+            Action::Close(id) => self.close_tab(id),
             Action::Activate(i) => {
                 self.active = i.min(self.tabs.len() - 1);
                 self.focus_editor = true;
@@ -723,13 +996,6 @@ impl App {
     }
 
     fn receive(&mut self, ctx: &Context) {
-        while let Ok(files) = self.inbox.try_recv() {
-            for file in files {
-                self.open_path(file);
-            }
-            ctx.send_viewport_cmd(ViewportCommand::Minimized(false));
-            ctx.send_viewport_cmd(ViewportCommand::Focus);
-        }
         let dropped: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -972,6 +1238,20 @@ impl App {
         // Leave room for the + button, some empty strip to drag the window by, and the window buttons.
         let room = ui.available_width() - 44.0 - 40.0 - 3.0 * WINDOW_BUTTON;
         let width = ((room - 4.0 * (n - 1.0)) / n).clamp(120.0, 220.0);
+        let ctx = ui.ctx().clone();
+        let (pointer, press, released) = ctx.input(|i| {
+            let p = &i.pointer;
+            (p.interact_pos(), p.press_origin(), !p.primary_down())
+        });
+        if let (Some(d), Some(p)) = (&mut self.drag, pointer) {
+            d.at = p;
+        }
+        // Where the tabs are; a dragged tab let go near it stays in the window.
+        let tabs = Rect::from_x_y_ranges(
+            ui.max_rect().left()..=ui.max_rect().left() + room,
+            window.top()..=ui.max_rect().bottom(),
+        );
+        let mut slots = Vec::with_capacity(self.tabs.len());
         let mut active_rect = None;
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
@@ -981,8 +1261,39 @@ impl App {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         for (i, tab) in self.tabs.iter().enumerate() {
-                            let (rect, response) =
-                                ui.allocate_exact_size(vec2(width, height), Sense::click());
+                            let (slot, _) =
+                                ui.allocate_exact_size(vec2(width, height), Sense::hover());
+                            slots.push(slot);
+                            // Its own id, so a drag goes on when the tab changes places.
+                            let response = ui.interact(
+                                slot,
+                                ui.scope_id().with(("tab", tab.id)),
+                                Sense::click_and_drag(),
+                            );
+                            if response.drag_started_by(PointerButton::Primary)
+                                && let Some(p) = pointer
+                            {
+                                self.drag = Some(TabDrag {
+                                    id: tab.id,
+                                    grab: p - slot.min,
+                                    start: press.unwrap_or(p),
+                                    at: p,
+                                    out: false,
+                                });
+                                self.active = i;
+                                self.focus_editor = true;
+                            }
+                            // The dragged tab follows the mouse along the strip.
+                            let rect = match &self.drag {
+                                Some(d) if d.id == tab.id && !d.out => {
+                                    let x = (d.at.x - d.grab.x).clamp(
+                                        tabs.left(),
+                                        (tabs.right() - width).max(tabs.left()),
+                                    );
+                                    slot.translate(vec2(x - slot.left(), 0.0))
+                                }
+                                _ => slot,
+                            };
                             let close_rect = Rect::from_center_size(
                                 pos2(rect.right() - 18.0, rect.center().y),
                                 vec2(24.0, 24.0),
@@ -1094,6 +1405,7 @@ impl App {
                 self.actions.push(Action::NewTab);
             }
         });
+        self.drag_tab(&ctx, tabs, &slots, width, released);
         self.shown_tab = self.tab().id;
         self.window_buttons(ui, window);
         // The strip's bottom line, open under the active tab.
@@ -1107,6 +1419,82 @@ impl App {
             }
             _ => {
                 painter.hline(full.x_range(), y, Stroke::new(1.0, theme::hair()));
+            }
+        }
+    }
+
+    /// A dragged tab changes places with the others along the strip. Off it, it shows under the mouse, and let go
+    /// there, `App` moves it to another window or a new one.
+    fn drag_tab(&mut self, ctx: &Context, tabs: Rect, slots: &[Rect], width: f32, released: bool) {
+        let (inner, ppp) = ctx.input(|i| (i.viewport().inner_rect, i.pixels_per_point));
+        let on_screen = |r: Rect| inner.map(|w| r.translate(w.min.to_vec2()) * ppp);
+        self.place = inner.map(|w| Place {
+            window: w * ppp,
+            strip: on_screen(tabs).unwrap_or(Rect::NOTHING),
+            centers: slots
+                .iter()
+                .map(|s| (w.min.x + s.center().x) * ppp)
+                .collect(),
+        });
+        let Some(d) = &mut self.drag else { return };
+        let Some(from) = self.tabs.iter().position(|t| t.id == d.id) else {
+            self.drag = None;
+            return;
+        };
+        d.out = !tabs.expand2(vec2(0.0, 24.0)).contains(d.at);
+        ctx.set_cursor_icon(CursorIcon::Grabbing);
+        if released {
+            if d.out {
+                self.dropped = Some(Dropped {
+                    id: d.id,
+                    at: inner.map(|w| (w.min + d.at.to_vec2()) * ppp),
+                    moved: d.at - d.start,
+                });
+            }
+            self.drag = None;
+        } else if d.out {
+            let rect = Rect::from_min_size(d.at - d.grab, vec2(width, 36.0));
+            let painter = ctx.layer_painter(LayerId::new(Order::Tooltip, Id::unique("tab-ghost")));
+            let top = CornerRadius {
+                nw: 10,
+                ne: 10,
+                sw: 0,
+                se: 0,
+            };
+            painter.add(theme::glow(LINE, 10, 0.35).as_shape(rect, top));
+            painter.rect_filled(rect, top, theme::BG);
+            painter.rect_stroke(
+                rect,
+                top,
+                Stroke::new(1.0, tint(LINE, 0.6)),
+                egui::StrokeKind::Inside,
+            );
+            let mut job = LayoutJob::simple_singleline(
+                self.tabs[from].title(self.t().untitled),
+                FontId::proportional(14.0),
+                tint(LINE, 0.25),
+            );
+            job.wrap = TextWrapping {
+                max_width: width - 28.0,
+                max_rows: 1,
+                break_anywhere: true,
+                overflow_character: Some('…'),
+            };
+            let galley = painter.layout_job(job);
+            let pos = pos2(rect.left() + 14.0, rect.center().y - galley.size().y / 2.0);
+            painter.galley(pos, galley, TEXT);
+        } else {
+            let center = d.at.x - d.grab.x + width / 2.0;
+            let to = slots
+                .iter()
+                .enumerate()
+                .filter(|(j, s)| *j != from && s.center().x < center)
+                .count();
+            if to != from {
+                let tab = self.tabs.remove(from);
+                self.tabs.insert(to, tab);
+                self.active = to;
+                self.touch();
             }
         }
     }
@@ -1504,6 +1892,7 @@ impl App {
         let mut ui = ui.new_child(UiBuilder::new().max_rect(rect));
         ui.set_clip_rect(rect.intersect(ui.clip_rect()));
         let zoom = self.zoom();
+        let wide = self.settings.wide_split || self.tab().shown_view() == View::Preview;
         let Tab {
             preview,
             text,
@@ -1511,7 +1900,7 @@ impl App {
             id,
             ..
         } = &mut self.tabs[self.active];
-        let clicked = preview.show(&mut ui, text, path.as_deref(), zoom, ("preview", *id));
+        let clicked = preview.show(&mut ui, text, path.as_deref(), zoom, wide, ("preview", *id));
         if let Some(target) = clicked {
             self.open_link(target);
         }
@@ -1565,22 +1954,28 @@ impl App {
                 match choice {
                     Some(0) => {
                         if self.save(i) {
-                            self.remove_tab(ctx, i);
+                            self.take_tab(i);
+                        } else {
+                            self.closing = false;
                         }
                         None
                     }
                     Some(1) => {
-                        self.remove_tab(ctx, i);
+                        self.take_tab(i);
                         None
                     }
-                    Some(_) => None,
-                    None if response.should_close() => None,
-                    None => Some(Dialog::SavePrompt(id)),
+                    None if !response.should_close() => Some(Dialog::SavePrompt(id)),
+                    // Cancel stops closing the window too.
+                    _ => {
+                        self.closing = false;
+                        None
+                    }
                 }
             }
             Dialog::Settings => {
                 let mut lang = self.settings.lang;
                 let mut wrap = self.settings.wrap;
+                let mut wide = self.settings.wide_split;
                 let mut changelog = false;
                 let mut done = false;
                 let response = modal("settings").show(ctx, |ui| {
@@ -1599,6 +1994,7 @@ impl App {
                             });
                     });
                     theme::switch(ui, &mut wrap, t.word_wrap);
+                    theme::switch(ui, &mut wide, t.wide_split);
                     ui.vertical_centered(|ui| {
                         ui.horizontal(|ui| {
                             let version =
@@ -1632,8 +2028,9 @@ impl App {
                     });
                     done = theme::button_row(ui, &[(t.done, ButtonKind::Primary)]).is_some();
                 });
-                if lang != self.settings.lang || wrap != self.settings.wrap {
-                    (self.settings.lang, self.settings.wrap) = (lang, wrap);
+                let s = &mut self.settings;
+                if (lang, wrap, wide) != (s.lang, s.wrap, s.wide_split) {
+                    (s.lang, s.wrap, s.wide_split) = (lang, wrap, wide);
                     self.save_settings();
                 }
                 if changelog {
@@ -1658,7 +2055,7 @@ impl App {
                     );
                     let mut inner = ui.new_child(UiBuilder::new().max_rect(rect));
                     inner.set_clip_rect(rect);
-                    let _ = preview.show(&mut inner, CHANGELOG, None, 0.875, "changelog");
+                    let _ = preview.show(&mut inner, CHANGELOG, None, 0.875, false, "changelog");
                     close = theme::button_row(ui, &[(t.close, ButtonKind::Primary)]).is_some();
                 });
                 if close || response.should_close() {
@@ -1751,8 +2148,9 @@ impl App {
     }
 }
 
-impl eframe::App for App {
-    fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
+impl Window {
+    /// `alone`: the only window shown, which closes without asking, and ends DystoPad.
+    fn ui(&mut self, ui: &mut Ui, alone: bool) {
         let ctx = ui.ctx().clone();
         self.frames = self.frames.saturating_add(1);
         if self.frames < 5 {
@@ -1764,14 +2162,25 @@ impl eframe::App for App {
                 self.frames = 5;
             }
         }
+        #[cfg(windows)]
+        crate::win32::type_ctrl_alt(&ctx);
         self.receive(&ctx);
         self.shortcuts(&ctx);
         for action in std::mem::take(&mut self.actions) {
             self.run(&ctx, action);
         }
         if ctx.input(|i| i.viewport().close_requested()) {
-            self.save_session();
+            if alone {
+                self.gone = true;
+            } else {
+                // eframe would end with its root window; `App` hides that one once its tabs are gone.
+                if self.viewport == ViewportId::ROOT {
+                    ctx.send_viewport_cmd(ViewportCommand::CancelClose);
+                }
+                self.closing = true;
+            }
         }
+        self.close_tabs();
 
         let bar = |top: i8| {
             Frame::new().fill(theme::BG).inner_margin(Margin {
@@ -1808,21 +2217,9 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(ViewportCommand::Title(title.clone()));
             self.title = title;
         }
-        if let Some(due) = self.session_due {
-            let now = Instant::now();
-            if now >= due {
-                self.save_session();
-            } else {
-                ctx.request_repaint_after(due - now);
-            }
-        }
         if !self.actions.is_empty() {
             ctx.request_repaint();
         }
-    }
-
-    fn on_exit(&mut self) {
-        self.save_session();
     }
 }
 

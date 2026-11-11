@@ -6,7 +6,8 @@ A small notepad for the desktop, in the neon-on-black look of the Dysto apps, wi
 
 - **A plain notepad:** tabs, open and save, undo and redo, find and replace, go to line, word wrap, print and zoom. The status bar shows the line, column, character count and zoom.
 - **Tabs stay open until you close them,** unsaved text included, even across restarts. An unsaved tab is named after its first words, as in Notepad. Files opened from Explorer ("Open with") or dropped on the window open as a new tab in the running window.
-- **Markdown mode:** the **Markdown** switch in the bottom right turns a tab into a Markdown editor with highlighting, next to a live preview in GitHub's dark style. The switch at the top shows the editor, both, or only the preview; drag the line between them to resize. A format bar adds headings, lists, bold, italic, strikethrough, links and tables.
+- **Tabs move between windows,** as in Notepad: drag a tab off the strip into a window of its own, onto another window's tabs, or along the strip to reorder.
+- **Markdown mode:** the **Markdown** switch in the bottom right turns a tab into a Markdown editor with highlighting, next to a live preview in GitHub's dark style that fills the window. The switch at the top shows the editor, both, or only the preview; drag the line between them to resize. A format bar adds headings, lists, bold, italic, strikethrough, links and tables.
 - **Markdown files** (`.md`) open as their preview. Saving suggests `.md` while Markdown mode is on and `.txt` otherwise.
 - **English and German,** switchable under the gear icon.
 

@@ -7,12 +7,19 @@ use std::sync::mpsc::Sender;
 use interprocess::local_socket::prelude::*;
 use interprocess::local_socket::{GenericNamespaced, ListenerOptions, Name, Stream};
 
-/// One name per user, so two people on one computer each get their own window.
+/// One name per user, so two people on one computer each get their own window. A test run with its own
+/// `DYSTOPAD_DATA_DIR` gets its own too, so it doesn't hand its files to the real DystoPad.
 fn name() -> std::io::Result<Name<'static>> {
     let user = std::env::var("USERNAME")
         .or_else(|_| std::env::var("USER"))
         .unwrap_or_default();
-    format!("dystopad-{user}.sock").to_ns_name::<GenericNamespaced>()
+    let test = std::env::var_os("DYSTOPAD_DATA_DIR").map_or(String::new(), |d| {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::hash::DefaultHasher::new();
+        d.hash(&mut h);
+        format!("-{:x}", h.finish())
+    });
+    format!("dystopad-{user}{test}.sock").to_ns_name::<GenericNamespaced>()
 }
 
 /// Sends the files (none just brings the window up) to a running DystoPad. False if there is none.

@@ -1,12 +1,17 @@
 # Status
 
-Last updated: 2026-10-31
+Last updated: 2026-11-11
 
 ## Where things stand
 
-- **App:** DystoPad 1.1.0, released as `v1.1.0` on 2026-10-31: the tabs moved into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
-- **Postponed:** Ctrl+Alt typing what AltGr types (`[ ] { } @ €` on a German keyboard). `TODO.md` explains why: the fix is in egui-winit, and the owner doesn't want to build from a patched copy of egui.
-- **Stack:** Rust 2024, eframe/egui 0.37 (wgpu), pulldown-cmark, syntect, rfd for the file dialogs, interprocess for the single instance.
+- **App:** DystoPad 1.2.0, released as `v1.2.0` on 2026-11-11. Tabs move between windows as in Windows Notepad: off the strip into a new window, onto another window's strip, or along the strip to reorder. The preview fills the window (Settings can keep GitHub's column in split view), and wide tables wrap their cells. Ctrl+Alt types what AltGr types on Windows. 1.1.0 (2026-10-31) moved the tabs into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
+- **Stack:** Rust 2024, eframe/egui 0.37 (wgpu), pulldown-cmark, syntect, rfd for the file dialogs, interprocess for the single instance; on Windows, winit's message hook and windows-sys (`src/win32.rs`).
+- Verified on 2026-11-11 for 1.2.0 (Windows 11 at 125 % scaling, German keyboard), driving the debug build with simulated keys and mouse and checking screenshots:
+  - `cargo test` (42 tests) passes.
+  - Ctrl+left Alt with Q, E, 2, 3, 7, 8, 9, 0, ß, + and < types `@€²³{[]}\~|`, and the window stays open. AltGr+Q types one `@`. Ctrl+Alt+S does nothing, and Ctrl+A still selects all. This works in a dragged-out window too.
+  - Tabs: dragging one along the strip reorders it. Off the strip, a ghost of it follows the mouse; let go over the window's own editor or on the desktop, it opens in a new window, offset by the drag, with the same size. Dropped on another window's strip, it goes in between the tabs it was dropped between, also when grabbed in a window in the background and let go after a pause. A window's only tab dropped elsewhere moves the window by the drag.
+  - Closing the main window while another is open asks about each unsaved tab (Cancel keeps the window); after that the main window hides and the other keeps working, takes files from a second start, and moves by its tab. Ctrl+W on a second window's last unsaved tab asks, then closes only that window. Closing the last window doesn't ask and ends DystoPad. The session holds the tabs of all open windows, and the next start shows them in one window.
+  - Preview: full width in Preview and Split view; a five-column table wraps its long cells (inline code and links in wrapped rows included), and a small table keeps its natural width. The settings switch fits at 1093×560.
 - Verified on 2026-10-31 for 1.1.0 (Windows 11 at 125 % scaling), driving the debug build with simulated mouse and keys and checking screenshots:
   - `cargo test` (41 tests) passes. The title bar at 1093×560 and 1280×650 (logical) and maximized: the window buttons fit, show Windows' tooltips ("Restore down" while maximized) and the close button turns red on hover.
   - Dragging the empty strip moves the window; a double-click maximizes; the maximize button restores; dragging it to the top of the screen snaps it to maximized; minimize minimizes; F11's fullscreen shows the restore icon, which leaves fullscreen; the close button closes the window and the session is saved.
@@ -25,6 +30,7 @@ Last updated: 2026-10-31
   - A second start with a file hands it to the running window as a new tab and exits. A file dragged onto the window (a real OLE drag) opens as a new tab; a Windows-1252 file shows its umlauts.
   - Printing: Ctrl+P opens the page in the default browser (Firefox) with its print dialog. The page, rendered in headless Edge, matches GitHub's light style, task lists, alerts and footnotes included.
 - **Not yet verified:**
+  - Several windows on Linux: on Wayland egui can't tell where windows are, so a tab dropped off the strip always opens a new window wherever the compositor puts it, and a window's only tab can't move it. Dropping a tab between monitors with different scaling (the window positions are compared in pixels, so it should work).
   - The title bar on Linux (X11 and Wayland), dragging the window between monitors with different scaling, and Windows' window menu (Alt+Space, right-click on the strip; probably gone with the system frame).
   - The setup through its pages (only the silent install was run), and the portable exe on another PC.
   - A web link clicked in the preview opening in the browser (it uses the same call as printing), and zoom with Ctrl+mouse wheel.
@@ -35,7 +41,9 @@ Last updated: 2026-10-31
 - Files in UTF-16 or Windows-1252 are read correctly but saved as UTF-8 (`shortcut:` in `src/files.rs`).
 - Find has match case and whole word, but no regular expressions (Dystonotepad's CodeMirror search had them).
 - The preview shows only the text, line breaks and images of HTML in a document; images inside table cells show their alt text. It lays out the whole document every frame, which is fine for notes but slow for very long files.
-- No scroll sync between the editor and the preview, no drag-and-drop reordering of tabs, no spellcheck, no Mermaid or math.
+- No scroll sync between the editor and the preview, no spellcheck, no Mermaid or math.
+- A dragged tab's ghost shows only inside its own window (egui draws nothing outside its windows); a new window appears when the tab is let go, rather than following the mouse as in Notepad. The strip doesn't scroll while a tab is dragged to its edge.
+- Table cells wrap when the table is too wide, but a centered or right-aligned column aligns the cell's text block, not each wrapped line.
 - Undo history isn't kept across restarts. The window size and position aren't remembered; it opens at 1440×900, or maximized on small screens.
 - Unsigned builds: Windows SmartScreen warns on the first start.
 - The window draws its own title bar, so Windows 11's snap layouts don't pop up over the maximize button. Dragging the window to the top of the screen still maximizes it (tested); Win+Z and snapping to the sides weren't tried. The window resizes from its outermost 4 px (12 px in the corners) instead of Windows' wider invisible border.
@@ -45,4 +53,4 @@ Last updated: 2026-10-31
 1. Use the new title bar for a while: moving, snapping, resizing, several monitors.
 2. Install the setup from the release, check "Open with" for `.txt` and `.md`, then uninstall Dystonotepad.
 3. Start the AppImage on a Linux desktop, and check the title bar there.
-4. Ctrl+Alt as AltGr (`TODO.md`): check whether a newer egui has fixed it.
+4. Use several windows for a while: tearing tabs off, merging them back, closing windows with unsaved tabs.
