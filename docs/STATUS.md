@@ -4,7 +4,7 @@ Last updated: 2026-11-11
 
 ## Where things stand
 
-- **App:** DystoPad 1.2.0, released as `v1.2.0` on 2026-11-11. Tabs move between windows as in Windows Notepad: off the strip into a new window, onto another window's strip, or along the strip to reorder. The preview fills the window (Settings can keep GitHub's column in split view), and wide tables wrap their cells. Ctrl+Alt types what AltGr types on Windows. 1.1.0 (2026-10-31) moved the tabs into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
+- **App:** DystoPad 1.2.0, on `main` since 2026-11-11 but not tagged yet: CI passed on Windows, but its Linux job failed three times that day because GitHub's Ubuntu runner couldn't reach Ubuntu's package servers, before anything was compiled. The owner tags it when CI passes on Linux. Tabs move between windows as in Windows Notepad: off the strip into a new window, onto another window's strip, or along the strip to reorder. The preview fills the window (Settings can keep GitHub's column in split view), and wide tables wrap their cells. Ctrl+Alt types what AltGr types on Windows. 1.1.0 (2026-10-31) moved the tabs into the title bar, as in Windows Notepad (the window draws its own frame buttons, moves, maximizes and resizes itself). 1.0.0 (2026-10-28) was the Rust rewrite of Dystonotepad 0.1.0, with everything from the rewrite brief: the rename and new ".Md" icon, the list-heading bug fix, GitHub's code block styling, first-words tab names, the resizable split, the blue unsaved dot and the GPL license.
 - **Stack:** Rust 2024, eframe/egui 0.37 (wgpu), pulldown-cmark, syntect, rfd for the file dialogs, interprocess for the single instance; on Windows, winit's message hook and windows-sys (`src/win32.rs`).
 - Verified on 2026-11-11 for 1.2.0 (Windows 11 at 125 % scaling, German keyboard), driving the debug build with simulated keys and mouse and checking screenshots:
   - `cargo test` (42 tests) passes.
@@ -50,6 +50,7 @@ Last updated: 2026-11-11
 
 ## Next steps (suggested, not yet agreed with the owner)
 
+0. Re-run the failed Linux CI job (`gh run rerun 43032715611 --failed`). Once it passes and the owner says so, tag `v1.2.0` and push the tag; if that's not on 2026-11-11, change the date of 1.2.0 in the changelog first.
 1. Use the new title bar for a while: moving, snapping, resizing, several monitors.
 2. Install the setup from the release, check "Open with" for `.txt` and `.md`, then uninstall Dystonotepad.
 3. Start the AppImage on a Linux desktop, and check the title bar there.
